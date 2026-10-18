@@ -253,6 +253,9 @@ Op2Code emit_op2(const Instr& ins, const CodegenCtx& ctx,
                  const char* indent) {
     Op2Code out;
     if (ins.op2.kind == Op2::Kind::Imm) {
+        const std::string immediate = ctx.runtime_arm_immediate
+            ? "runtime_native_arm_immediate(" + pc_expr(ins.pc,ctx) + ")"
+            : fmt_hex32(ins.op2.imm_value);
         // Immediate. The decoder already pre-rotated imm_value;
         // imm_carry_out is 0/1, or 2 meaning "carry unchanged".
         std::vector<uint32_t> live_sites;
@@ -285,13 +288,13 @@ Op2Code emit_op2(const Instr& ins, const CodegenCtx& ctx,
             }
             setup << "runtime_thumb_alu_immediate("
                   << pc_expr(ins.pc, ctx) << ", "
-                  << fmt_hex32(ins.op2.imm_value) << ")";
-            if (!live_sites.empty()) setup << " : " << fmt_hex32(ins.op2.imm_value);
+                  << immediate << ")";
+            if (!live_sites.empty()) setup << " : " << immediate;
             setup << ";\n";
             out.setup = setup.str();
             out.value_expr = imm_var;
         } else {
-            out.value_expr = fmt_hex32(ins.op2.imm_value);
+            out.value_expr = immediate;
         }
         if (ins.op2.imm_carry_out == 2u) {
             out.carry_expr = "cpsr_c()";
@@ -1496,6 +1499,9 @@ bool emit_swi(std::ostringstream& body, const Instr& ins,
 
 std::string ArmCodegen::emit_instr(const Instr& ins, const CodegenCtx& ctx,
                                    bool* not_implemented) {
+    if (ctx.runtime_arm_immediate && (ctx.runtime_pc_base.empty() ||
+        !supports_runtime_arm_immediate(ins)))
+        throw std::invalid_argument("live ARM immediate requires a guarded AL non-S MOV/ADD without PC operands");
     if (!ctx.runtime_pc_base.empty() &&
         ((code_region(ins.pc) != 2u && code_region(ins.pc) != 3u &&
           !(code_region(ins.pc) >= 8u && code_region(ins.pc) <= 13u)) ||
