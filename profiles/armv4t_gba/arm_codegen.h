@@ -54,6 +54,15 @@ struct CodegenCtx {
     bool current_function_thumb = false;
     bool force_bx_c_return = false;
 
+    // Optional guest placement of a byte-verified code template's canonical
+    // entry. The caller captures this expression in a local uint32_t. Canonical
+    // and live addresses must share a bus class: RAM (EWRAM/IWRAM), or cartridge
+    // ROM (0x08..0x0D). Fetch waits use the live region; cartridge prefetch uses
+    // the live PC. PC operands and resume state use
+    // this base plus their canonical offset; literal data immediates do not.
+    // Empty preserves ordinary fixed-address code generation byte-for-byte.
+    std::string runtime_pc_base;
+
     // Stage 2 idle-loop elision. Set of back-edge branch PCs whose
     // in-function backward branch closes a statically-eligible
     // quiescent loop (no stores / calls / SWI / mode-change / PC-write
@@ -70,6 +79,8 @@ struct CodegenCtx {
     // the original compile-time literal, so games that do not explicitly opt
     // in pay no generated-code branch or callback cost.
     const std::unordered_set<uint32_t>* alu_immediate_override_pcs = nullptr;
+    // With runtime_pc_base these remain exact live guest PCs; generated guards
+    // prevent even an accepting callback from affecting other placements.
 
     // Far-branch BLs: instruction PC (the THUMB BL suffix, or the ARM BL) →
     // static target, for BLs whose link value the caller's analysis proved
