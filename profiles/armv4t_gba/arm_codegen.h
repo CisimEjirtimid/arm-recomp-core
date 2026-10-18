@@ -63,6 +63,12 @@ struct CodegenCtx {
     // Empty preserves ordinary fixed-address code generation byte-for-byte.
     std::string runtime_pc_base;
 
+    // A guarded native template may treat the imm12 field of an AL, non-S
+    // MOV/ADD (no PC operands/destination) as live data. The operation and
+    // registers remain fixed and validated; no instruction is decoded at run
+    // time. Requires runtime_pc_base and supports_runtime_arm_immediate().
+    bool runtime_arm_immediate = false;
+
     // Stage 2 idle-loop elision. Set of back-edge branch PCs whose
     // in-function backward branch closes a statically-eligible
     // quiescent loop (no stores / calls / SWI / mode-change / PC-write
@@ -92,6 +98,12 @@ struct CodegenCtx {
 
 class ArmCodegen {
 public:
+    static bool supports_runtime_arm_immediate(const Instr& i) {
+        return !i.thumb && !i.is_undefined && i.cond == Cond::AL &&
+            !i.set_flags && i.rd < 15 && i.op2.kind == Op2::Kind::Imm &&
+            (i.op == IrOp::MOV || (i.op == IrOp::ADD && i.rn < 15));
+    }
+
     // Emit C source for one decoded instruction. `not_implemented`
     // is set true if the IR shape is not yet lowered. The string
     // ends in a newline; callers may indent it as they please.
