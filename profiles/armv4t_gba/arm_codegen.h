@@ -54,6 +54,14 @@ struct CodegenCtx {
     bool current_function_thumb = false;
     bool force_bx_c_return = false;
 
+    // Optional guest placement of a RAM code template's canonical function
+    // entry. The caller captures this expression in a local uint32_t. Canonical
+    // IR must use a RAM bus region (EWRAM/IWRAM); the live base must also be
+    // RAM. Fetch waits use the live region. PC operands and resume state use
+    // this base plus their canonical offset; literal data immediates do not.
+    // Empty preserves ordinary fixed-address code generation byte-for-byte.
+    std::string runtime_pc_base;
+
     // Stage 2 idle-loop elision. Set of back-edge branch PCs whose
     // in-function backward branch closes a statically-eligible
     // quiescent loop (no stores / calls / SWI / mode-change / PC-write
