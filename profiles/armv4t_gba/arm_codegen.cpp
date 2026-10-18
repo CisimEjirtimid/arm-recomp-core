@@ -231,11 +231,11 @@ bool code_prefetchable(const Instr& ins) {
 // `addr` is the data address (a multiply passes 0u: always eligible).
 std::string prefetch_adjust_stmt(const Instr& ins, const std::string& wait,
                                  const std::string& addr,
-                                 const char* indent) {
+                                 const char* indent, const CodegenCtx& ctx) {
     if (!code_prefetchable(ins)) return "";
     std::ostringstream s;
     s << indent << cyc_var_for(ins) << " += runtime_prefetch_adjust(" << wait
-      << ", " << addr << ", " << fmt_hex32(ins.pc) << ", "
+      << ", " << addr << ", " << pc_expr(ins.pc, ctx) << ", "
       << (ins.thumb ? "1u" : "0u") << ");\n";
     return s.str();
 }
@@ -368,8 +368,8 @@ Op2Code emit_op2(const Instr& ins, const CodegenCtx& ctx,
                 // RRX from a register-form shift shouldn't occur
                 // — only imm-form ROR with count==0 produces RRX.
                 // Emit a defensive abort.
-                s << indent << "runtime_unimplemented_op(\"reg-shift RRX\", 0x"
-                  << std::hex << ins.pc << std::dec << "u);\n";
+                s << indent << "runtime_unimplemented_op(\"reg-shift RRX\", "
+                  << pc_expr(ins.pc, ctx) << ");\n";
                 s << indent << op2_var << " = 0u; " << co_var << " = 0u;\n";
                 break;
         }
@@ -826,7 +826,7 @@ bool emit_branch(std::ostringstream& body, const Instr& ins,
             uint32_t link = ins.pc + (ins.thumb ? 2u : 4u);
             if (const uint32_t* target = link_branch_target(ctx, ins.pc)) {
                 uint32_t lr = ins.thumb ? (link | 1u) : link;
-                body << indent << "g_cpu.R[14] = " << fmt_hex32(lr) << ";\n";
+                body << indent << "g_cpu.R[14] = " << pc_expr(lr, ctx) << ";\n";
                 body << emit_direct_branch(*target, ins.pc, false, 0,
                                            ins.thumb, ctx, indent);
                 return true;
@@ -963,7 +963,7 @@ bool emit_memory(std::ostringstream& body, const Instr& ins,
     // Prefetch-buffer stall adjustment (ROM code only); a load's stall
     // includes its trailing internal cycle.
     body << prefetch_adjust_stmt(ins, is_load ? mc_var + " + 1u" : mc_var,
-                                 ea_var, indent);
+                                 ea_var, indent, ctx);
 
     if (is_load) {
         std::string val_var = "_v" + sfx;
@@ -1094,7 +1094,7 @@ bool emit_block_transfer(std::ostringstream& body, const Instr& ins,
         body << indent << cyc_var_for(ins) << " += " << mc_var << ";\n";
         body << prefetch_adjust_stmt(ins,
                                      blk.load ? mc_var + " + 1u" : mc_var,
-                                     addr_var, indent);
+                                     addr_var, indent, ctx);
         if (blk.load) {
             std::string pcv = "_pc" + sfx;
             body << indent << "uint32_t " << pcv
@@ -1179,7 +1179,7 @@ bool emit_block_transfer(std::ostringstream& body, const Instr& ins,
             // exit below ticks the instruction.
             body << indent << cyc_var_for(ins) << " += " << ba_var << ";\n";
             body << prefetch_adjust_stmt(
-                ins, blk.load ? ba_var + " + 1u" : ba_var, lo_var, indent);
+                ins, blk.load ? ba_var + " + 1u" : ba_var, lo_var, indent, ctx);
         }
         if (blk.load) {
             if (r == 15) {
@@ -1261,7 +1261,7 @@ bool emit_block_transfer(std::ostringstream& body, const Instr& ins,
 }
 
 bool emit_multiply(std::ostringstream& body, const Instr& ins,
-                   const char* indent) {
+                   const CodegenCtx& ctx, const char* indent) {
     std::string sfx = uniq_suffix(ins);
     auto rd = static_cast<unsigned>(ins.rd);
     auto rn = static_cast<unsigned>(ins.rn);
@@ -1272,7 +1272,7 @@ bool emit_multiply(std::ostringstream& body, const Instr& ins,
     const std::string mw = "_mw" + sfx;
     const std::string charge_mw =
         std::string(indent) + cyc_var_for(ins) + " += " + mw + ";\n" +
-        prefetch_adjust_stmt(ins, mw, "0u", indent);
+        prefetch_adjust_stmt(ins, mw, "0u", indent, ctx);
     switch (ins.op) {
         case IrOp::MUL: {
             body << indent << "uint32_t " << mw << " = runtime_mul_cycles(g_cpu.R["
@@ -1390,8 +1390,8 @@ bool emit_swap(std::ostringstream& body, const Instr& ins,
              << av << (width == 4u ? " & ~3u" : "") << ", " << width
              << "u, 0u);\n";
         body << indent << cyc_var_for(ins) << " += 2u * " << sa << ";\n";
-        body << prefetch_adjust_stmt(ins, sa + " + 1u", av, indent);
-        body << prefetch_adjust_stmt(ins, sa, av, indent);
+        body << prefetch_adjust_stmt(ins, sa + " + 1u", av, indent, ctx);
+        body << prefetch_adjust_stmt(ins, sa, av, indent, ctx);
     };
     if (ins.op == IrOp::SWP) {
         std::string av = "_a" + sfx;
@@ -1474,9 +1474,10 @@ bool emit_swi(std::ostringstream& body, const Instr& ins,
 std::string ArmCodegen::emit_instr(const Instr& ins, const CodegenCtx& ctx,
                                    bool* not_implemented) {
     if (!ctx.runtime_pc_base.empty() &&
-        ((code_region(ins.pc) != 2u && code_region(ins.pc) != 3u) ||
+        ((code_region(ins.pc) != 2u && code_region(ins.pc) != 3u &&
+          !(code_region(ins.pc) >= 8u && code_region(ins.pc) <= 13u)) ||
          code_region(ctx.current_function_addr) != code_region(ins.pc))) {
-        throw std::invalid_argument("runtime PC base requires canonical RAM-region IR");
+        throw std::invalid_argument("runtime PC base requires canonical RAM/cartridge IR");
     }
     if (not_implemented) *not_implemented = false;
 
@@ -1593,7 +1594,7 @@ std::string ArmCodegen::emit_instr(const Instr& ins, const CodegenCtx& ctx,
         case IrOp::MUL: case IrOp::MLA:
         case IrOp::UMULL: case IrOp::UMLAL:
         case IrOp::SMULL: case IrOp::SMLAL:
-            ok = emit_multiply(os, ins, indent);
+            ok = emit_multiply(os, ins, ctx, indent);
             break;
         case IrOp::SWP: case IrOp::SWPB:
             ok = emit_swap(os, ins, ctx, indent);
