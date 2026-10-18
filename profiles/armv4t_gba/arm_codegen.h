@@ -79,6 +79,8 @@ struct CodegenCtx {
     // the original compile-time literal, so games that do not explicitly opt
     // in pay no generated-code branch or callback cost.
     const std::unordered_set<uint32_t>* alu_immediate_override_pcs = nullptr;
+    // With runtime_pc_base these remain exact live guest PCs; generated guards
+    // prevent even an accepting callback from affecting other placements.
 
     // Far-branch BLs: instruction PC (the THUMB BL suffix, or the ARM BL) →
     // static target, for BLs whose link value the caller's analysis proved

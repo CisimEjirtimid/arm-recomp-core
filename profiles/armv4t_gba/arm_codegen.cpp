@@ -3,6 +3,7 @@
 #include "arm_codegen.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -254,17 +255,39 @@ Op2Code emit_op2(const Instr& ins, const CodegenCtx& ctx,
     if (ins.op2.kind == Op2::Kind::Imm) {
         // Immediate. The decoder already pre-rotated imm_value;
         // imm_carry_out is 0/1, or 2 meaning "carry unchanged".
+        std::vector<uint32_t> live_sites;
+        if (ctx.alu_immediate_override_pcs && !ctx.runtime_pc_base.empty()) {
+            const bool ram=code_region(ins.pc)==2u || code_region(ins.pc)==3u;
+            for (uint32_t site : *ctx.alu_immediate_override_pcs) {
+                const auto region=code_region(site);
+                if (ram ? (region==2u || region==3u) : (region>=8u && region<=13u))
+                    live_sites.push_back(site);
+            }
+            std::sort(live_sites.begin(),live_sites.end());
+        }
         if (ctx.alu_immediate_override_pcs &&
-            ctx.alu_immediate_override_pcs->count(ins.pc) != 0) {
+            (ctx.runtime_pc_base.empty()
+                ? ctx.alu_immediate_override_pcs->count(ins.pc)!=0
+                : !live_sites.empty())) {
             // Opt-in, exact-PC enhancement hook. Only configured ARM/THUMB
             // ALU immediates route through this chokepoint; memory offsets
             // and branch displacements remain constants.
             std::string imm_var = "_imm" + uniq_suffix(ins);
             std::ostringstream setup;
-            setup << indent << "uint32_t " << imm_var
-                  << " = runtime_thumb_alu_immediate("
+            setup << indent << "uint32_t " << imm_var << " = ";
+            if (!live_sites.empty()) {
+                setup << "(";
+                for (std::size_t n=0;n<live_sites.size();++n) {
+                    if (n) setup << " || ";
+                    setup << pc_expr(ins.pc,ctx) << " == " << fmt_hex32(live_sites[n]);
+                }
+                setup << ") ? ";
+            }
+            setup << "runtime_thumb_alu_immediate("
                   << pc_expr(ins.pc, ctx) << ", "
-                  << fmt_hex32(ins.op2.imm_value) << ");\n";
+                  << fmt_hex32(ins.op2.imm_value) << ")";
+            if (!live_sites.empty()) setup << " : " << fmt_hex32(ins.op2.imm_value);
+            setup << ";\n";
             out.setup = setup.str();
             out.value_expr = imm_var;
         } else {
