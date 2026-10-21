@@ -288,6 +288,17 @@ std::string arm9_tick_expr(const Instr& ins, bool has_data,
                              arm7_is_load(ins.op),
                              refill_target_expr);
 }
+// LDM/POP that loads PC. melonDS A_LDM / T_POP call JumpTo BEFORE
+// AddCycles_CDI, so the ARM9 combine's numC is the target's last pipeline
+// fetch (arm9_ldm_pc_numc), not this instruction's own fetch. Single LDR and
+// ALU PC writes tick before JumpTo and keep arm9_tick_expr.
+std::string arm9_ldm_pc_tick_expr(const Instr& ins,
+                                  const std::string& target_expr) {
+    return arm9_tick_expr_ex("arm9_ldm_pc_numc(" + target_expr + ")",
+                             cyc_var_for(ins), data_var_for(ins),
+                             int_var_for(ins), true, arm7_is_load(ins.op),
+                             target_expr);
+}
 
 // Dedicated B/BL/BX/BLX timing. Both melonDS cores' branch handlers call
 // JumpTo directly: a taken branch pays the target refill, not an additional
@@ -1459,7 +1470,7 @@ bool emit_block_transfer(std::ostringstream& body, const Instr& ins,
                 body << indent << "if (" << mode_is_priv_non_system_expr()
                      << ") { runtime_exception_return(" << pcv
                      << " & ~1u); runtime_tick("
-                     << arm9_tick_expr(ins, true,
+                     << arm9_ldm_pc_tick_expr(ins,
                          "((" + pcv + " & ~1u) | ((g_cpu.cpsr & CPSR_T_BIT) ? 1u : 0u))")
                      << "); return; }\n";
             }
@@ -1469,7 +1480,7 @@ bool emit_block_transfer(std::ostringstream& body, const Instr& ins,
             // CPSR.T is already set to the target mode (just above) — no
             // staleness caveat here.
             body << indent << "runtime_tick("
-                 << arm9_tick_expr(ins, true, pcv)
+                 << arm9_ldm_pc_tick_expr(ins, pcv)
                  << ");\n";
             body << indent << "if (runtime_unwinding()) return;\n";
             if (ctx.trace_live_transfers)
@@ -1602,7 +1613,7 @@ bool emit_block_transfer(std::ostringstream& body, const Instr& ins,
         // the last iteration — ascending order, and pc_in_list guarantees
         // it ran), so no staleness caveat here.
         body << indent << "runtime_tick("
-             << arm9_tick_expr(ins, true, pc_var)
+             << arm9_ldm_pc_tick_expr(ins, pc_var)
              << ");\n";
         body << indent << "if (runtime_unwinding()) return;\n";
             if (blk.rn == 13) {
